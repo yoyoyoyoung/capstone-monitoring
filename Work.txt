@@ -1,0 +1,6 @@
+캡스톤 프로젝트 폴더 구조
+
+protos/ (통신 규약 파일 저장)
+server/ (Spring boot 프로젝트)
+agent/ (Python 프로젝트)
+web/ (React 프로젝트)

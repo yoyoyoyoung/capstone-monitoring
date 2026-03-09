@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.capstone.monitoring";
+option java_outer_classname = "MonitoringProto";
+
+
+// 서비스 정의
+service MonitoringService {
+    // 에이전트가 리소스 정보를 보내면 서버가 확인 응답
+    rpc SendMetrics (MetricRequest) returns (MetricResponse);
+}
+
+// 에이전트가 보낼 데이터 형식
+message MetricRequest {
+    string server_id = 1;   // 서버 이름/ID
+    double cpu_usage = 2;   // CPU 점유율
+    double mem_usage = 3;   // 메모리 점유율
+    double disk_usage = 4;  // 디스크 점유율
+}
+
+// 서버가 답장할 데이터 형식
+message MetricResponse{
+    bool success = 1;   // 성공 여부
+    string message = 2; // 응답 메시지
+}
