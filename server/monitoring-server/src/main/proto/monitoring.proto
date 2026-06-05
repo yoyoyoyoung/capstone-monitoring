@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.capstone.monitoring";
+option java_outer_classname = "MonitoringProto";
+
+package monitoring;
+
+service MonitoringService {
+  rpc SendMetrics (MetricRequest) returns (MetricResponse);
+}
+
+// 📡 확장된 6대 실속형 지표 정의
+message MetricRequest {
+  string agent_id = 1;          // 에이전트 식별자: 닉네임(UUID)
+  double cpu_usage = 2;         // CPU 사용률 (%)
+  double memory_usage = 3;      // RAM 사용률 (%)
+
+  double disk_usage = 4;        // 디스크 사용량 (%)
+  double net_download_speed = 5; // 네트워크 다운로드 속도 (KB/s)
+  double net_upload_speed = 6;   // 네트워크 업로드 속도 (KB/s)
+  double network_latency = 7;   // 네트워크 지연시간 (ms, Ping)
+
+  bool is_java_alive = 8;       // 핵심 프로세스: 자바 서버 생존 여부
+  bool is_mysql_alive = 9;      // 핵심 프로세스: MySQL DB 생존 여부
+}
+
+message MetricResponse {
+  bool success = 1;
+  string message = 2;
+}

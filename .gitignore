@@ -1,0 +1,18 @@
+# Python 관련 제외
+.venv/
+__pycache__/
+build/
+dist/
+*.spec
+config.json
+
+# Java / Gradle 관련 제외
+.gradle/
+build/
+out/
+target/
+*.jar
+
+# React / Node 관련 제외
+node_modules/
+.pnpm-store/
