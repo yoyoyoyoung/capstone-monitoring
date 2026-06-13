@@ -21,8 +21,8 @@ public class UserEntity {
     private String password;
 
     @Column(nullable = false)
-    private String orgCode; // 멀티테넌시 증명용 핵심 필드
+    private String orgCode;
 
     @Column(nullable = false)
-    private String role; // USER 또는 ADMIN
+    private String role;
 }

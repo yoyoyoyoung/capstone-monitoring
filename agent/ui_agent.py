@@ -79,7 +79,6 @@ class GrpcSenderThread(QThread):
         self.is_sending = True
 
     def get_network_latency(self, ip):
-        """윈도우 ping 명령어를 통해 네트워크 지연시간(ms)을 측정하는 함수"""
         try:
             cmd = ["ping", "-n", "1", "-w", "1000", ip]
             res = subprocess.run(cmd, capture_output=True, text=True, creationflags=0x08000000)
@@ -98,7 +97,6 @@ class GrpcSenderThread(QThread):
         try:
             config = load_config()
             server_address = f"{config['server_ip']}:9090"
-            # 🔒 [UI 분리 반영] config.json의 org_code와 nickname을 조합하여 백엔드가 인식할 이름표 자동 빌드
             combined_agent_id = f"{config.get('org_code', '')}_{config['nickname']}({config['agent_id']})"
             
             channel = grpc.insecure_channel(server_address)
@@ -116,47 +114,36 @@ class GrpcSenderThread(QThread):
             print(f"[스레드] 중지 신호 발송 실패: {e}")
 
     def run(self):
-        was_sending = True  # 🔄 직전 루프 때 데이터를 보내고 있었는지 기억하는 상태 장부
+        was_sending = True
         
-        # 1. 네트워크 속도 측정을 위한 이전 값 패치
         psutil.cpu_percent(interval=None)
         net_before = psutil.net_io_counters()
         time_before = time.time()
         
         while self.running:
             if not self.is_sending:
-                # 🛑 [버그 박멸 구간] 전송 중지 상태로 바뀌는 '그 첫 번째 순간'에 딱 한 번만 인사를 보냅니다.
                 if was_sending:
                     self.sendGoodbyeSignal()
-                    was_sending = False  # 연속으로 인사장 스팸 안 날리게 플래그 잠금
+                    was_sending = False
                 
                 self.status_signal.emit("전송 일시 중지됨")
                 time.sleep(1)
                 
-                # 중지 상태에서 재개될 때 네트워크 속도가 튀지 않도록 기준점 초기화
                 net_before = psutil.net_io_counters()
                 time_before = time.time()
                 continue
 
-            # 🟢 전송 중일 때는 직전 상태 플래그를 계속 True로 켜둡니다.
             was_sending = True
             config = load_config()
             server_address = f"{config['server_ip']}:9090"
-            # 🔒 [UI 분리 반영] 루프 내 전송 세션 데이터 패킹 시에도 org_code를 접두사로 결합하여 매핑 전송
             combined_agent_id = f"{config.get('org_code', '')}_{config['nickname']}({config['agent_id']})"
 
             try:
                 channel = grpc.insecure_channel(server_address)
                 stub = monitoring_pb2_grpc.MonitoringServiceStub(channel)
-
-                # 2. CPU 측정을 겸한 1초 대기 (네트워크 속도의 시간 분모 역할)
                 cpu = psutil.cpu_percent(interval=None)
                 mem = psutil.virtual_memory().percent
-                
-                # 3. 디스크 사용량 측정 (현재 에이전트가 실행 중인 드라이브 기준)
                 disk = psutil.disk_usage('/').percent
-
-                # 4. 네트워크 속도 계산 (KB/s 단위 변환)
                 net_after = psutil.net_io_counters()
                 time_after = time.time()
                 time_delta = time_after - time_before
@@ -168,11 +155,9 @@ class GrpcSenderThread(QThread):
                     download_speed = 0.0
                     upload_speed = 0.0
                 
-                # 다음 루프 측정을 위해 이전 값 최신화
                 net_before = net_after
                 time_before = time_after
 
-                # 5. 네트워크 지연시간(Ping) 및 프로세스 상태 측정
                 latency = self.get_network_latency(config['server_ip'])
                 
                 java_alive = False
@@ -187,7 +172,6 @@ class GrpcSenderThread(QThread):
                     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                         pass
 
-                # 6대 지표 데이터 패킹 (정의한 .proto 규격과 1:1 매칭)
                 request = monitoring_pb2.MetricRequest(
                     agent_id=combined_agent_id,
                     cpu_usage=cpu,
@@ -203,7 +187,6 @@ class GrpcSenderThread(QThread):
                 response = stub.SendMetrics(request, timeout=2) 
 
                 if response.success:
-                    # 🛠️ [실시간 연동 가이드 추가] 자바 서버의 응답 메시지에 따라 텔레그램 헤더 텍스트 조합
                     if response.message == "WARN_NOT_LINKED":
                         telegram_status = "⚠️ 텔레그램 알림 미연동 (알림 작동 불가)\n"
                     elif response.message == "SUCCESS_LINKED":
@@ -213,7 +196,7 @@ class GrpcSenderThread(QThread):
 
                     status_text = (
                         f"데이터 정상 전송 중\n"
-                        f"{telegram_status}"  # 상태 라벨 상단에 연동 여부를 직관적으로 표기
+                        f"{telegram_status}"
                         f"• CPU: {cpu}% | RAM: {mem}% | 디스크: {disk}%\n"
                         f"• 다운로드: {download_speed:.1f} KB/s | ⬆️ 업로드: {upload_speed:.1f} KB/s\n"
                         f"• 지연시간: {latency} ms\n"
@@ -246,7 +229,6 @@ class MonitoringAgentUI(QMainWindow):
         self.sender_thread.start()
 
     def initUI(self):
-        # 상단 창 제목 설정
         self.setWindowTitle('Server Monitoring')
         
         if os.path.exists('icon.ico'):
@@ -260,12 +242,10 @@ class MonitoringAgentUI(QMainWindow):
         layout.setSpacing(8)
 
         self.id_label = QLabel(f"🆔 고유 UUID:  {self.config['agent_id']}")
-        # 🏢 [누락 버그 수리] 화면 상단에 현재 에이전트의 조직 코드가 무엇인지 명확하게 시각화 라벨 추가
         self.org_label = QLabel(f"🏢 소속 조직 코드:  {self.config.get('org_code', '미설정')}")
         self.nick_label = QLabel(f"👤 표시 닉네임:  {self.config['nickname']}")
         self.ip_label = QLabel(f"🌐 서버 주소:  {self.config['server_ip']}")
         
-        # 윈도우 시작 시 자동 실행 체크박스 생성 및 초기값 세팅
         self.auto_start_cb = QCheckBox(" 윈도우 시작 시 자동 실행 (백그라운드)")
         self.auto_start_cb.setChecked(self.config.get('auto_start', False))
         self.auto_start_cb.toggled.connect(self.toggleAutoStart)
@@ -292,7 +272,7 @@ class MonitoringAgentUI(QMainWindow):
         self.web_btn.setStyleSheet("background-color: #2b2b36; color: #4cc9f0; border: 1px solid #4cc9f0;")
 
         layout.addWidget(self.id_label)
-        layout.addWidget(self.org_label) # 🏢 조직 라벨 배치 추가
+        layout.addWidget(self.org_label)
         layout.addWidget(self.nick_label)
         layout.addWidget(self.ip_label)
         layout.addWidget(self.auto_start_cb) 
@@ -310,7 +290,6 @@ class MonitoringAgentUI(QMainWindow):
         self.status_label.setText(text)
 
     def sendGoodbyeSignal(self):
-        """자바 서버에 정상 종료/중지 상태임을 자발적으로 신고하는 공용 함수"""
         try:
             config = load_config()
             server_address = f"{config['server_ip']}:9090"
@@ -341,7 +320,6 @@ class MonitoringAgentUI(QMainWindow):
             self.toggle_btn.setText("전송 중지")
             self.toggle_btn.setStyleSheet("")
 
-    # レ지스트리에 등록/해제
     def toggleAutoStart(self, checked):
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         app_name = "CapstoneMonitoringAgent"
@@ -370,16 +348,16 @@ class MonitoringAgentUI(QMainWindow):
         save_config(self.config)
 
     def showSettingsDialog(self):
-        # 🏢 [3단계 입력 리팩토링 락] 조직 코드를 팝업창에서 직접 수정받아 머금을 수 있도록 1단계 입력 모달 가설 추가
         dialog_org = QInputDialog(self)
         dialog_org.setWindowTitle("에이전트 설정 수정")
-        # 테스트를 위한 조직 코드 입력란. 상용화 때는 삭제 요망
+        
+        # 테스트를 위한 조직 코드 입력란
         dialog_org.setLabelText("조직 코드를 입력하세요 (테스트용) (예: COMPANY_A):")
         dialog_org.setTextValue(self.config.get('org_code', ''))
         dialog_org.setStyleSheet(MODERN_STYLE)
         
         if dialog_org.exec_() == QDialog.Accepted:
-            new_org = dialog_org.textValue().strip().upper() # 대소문자 무시 필터링 안정성을 위해 무조건 대문자 강제 정화
+            new_org = dialog_org.textValue().strip().upper()
             
             dialog = QInputDialog(self)
             dialog.setWindowTitle("에이전트 설정 수정")
@@ -399,13 +377,11 @@ class MonitoringAgentUI(QMainWindow):
                 if dialog2.exec_() == QDialog.Accepted:
                     new_ip = dialog2.textValue().strip()
                     
-                    # 💾 입력받은 3가지 데이터를 세션 장부 및 내부 config.json 파일에 자동 세이브 마감
                     self.config['org_code'] = new_org
                     self.config['nickname'] = new_nick
                     self.config['server_ip'] = new_ip
                     save_config(self.config)
                     
-                    # UI 화면 텍스트 즉시 동적 갱신 리렌더링
                     self.org_label.setText(f"🏢 소속 조직 코드:  {self.config['org_code']}")
                     self.nick_label.setText(f"👤 표시 닉네임:  {self.config['nickname']}")
                     self.ip_label.setText(f"🌐 서버 주소:  {self.config['server_ip']}")
@@ -413,7 +389,6 @@ class MonitoringAgentUI(QMainWindow):
     def createTrayIcon(self):
         self.tray_icon = QSystemTrayIcon(self)
         
-        # 트레이 아이콘 설정
         if os.path.exists('icon.ico'):
             self.tray_icon.setIcon(QIcon('icon.ico'))
         else:

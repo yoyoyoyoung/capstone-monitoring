@@ -22,11 +22,11 @@ import java.util.UUID;
 public class AuthController {
 
     private final UserRepository userRepository;
-    private final MetricRepository metricRepository; // 🔒 [의존성 주입] 지표 조회를 위해 레포지토리 서랍 연결
+    private final MetricRepository metricRepository;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     /**
-     * 1. 회원가입 API
+     * 회원가입 API
      */
     @PostMapping("/signup")
     public ResponseEntity<String> signup(@RequestBody Map<String, String> request) {
@@ -34,12 +34,10 @@ public class AuthController {
         String password = request.get("password");
         String orgCode = request.get("orgCode");
 
-        // 중복 가입 방지
         if (userRepository.findByUsername(username).isPresent()) {
             return ResponseEntity.badRequest().body("이미 존재하는 아이디입니다.");
         }
 
-        // 비밀번호 정규식 검사
         String passwordPattern = "^(?=.*[A-Z])(?=.*[!@#$%^&*(),.?\":{}|<>]).{8,}$";
         if (password == null || !password.matches(passwordPattern)) {
             return ResponseEntity.badRequest().body("비밀번호는 8자리 이상이며, 대문자와 특수문자를 최소 1개 이상 포함해야 합니다.");
@@ -47,17 +45,16 @@ public class AuthController {
 
         UserEntity user = new UserEntity();
         user.setUsername(username);
-        // [보안 핵심] 비밀번호를 BCrypt로 단방향 암호화하여 저장
         user.setPassword(passwordEncoder.encode(password));
-        user.setOrgCode(orgCode.toUpperCase()); // 대문자로 통일
-        user.setRole("USER"); // 웹 회원가입은 무조건 일반 사용자(USER) 등급으로 고정
+        user.setOrgCode(orgCode.toUpperCase());
+        user.setRole("USER");
 
         userRepository.save(user);
         return ResponseEntity.ok("회원가입이 완료되었습니다.");
     }
 
     /**
-     * 2. 로그인 API (인증 성공 시 디지털 신분증 발급)
+     * 로그인 API
      */
     @PostMapping("/login")
     public ResponseEntity<Map<String, Object>> login(@RequestBody Map<String, String> request) {
@@ -70,28 +67,25 @@ public class AuthController {
         UserEntity user = userRepository.findByUsername(username)
                 .orElse(null);
 
-        // [보안 핵심] 유저가 없거나 비밀번호 해시값이 다르면 인증 실패
         if (user == null || !passwordEncoder.matches(password, user.getPassword())) {
             response.put("success", false);
             response.put("message", "아이디 또는 비밀번호가 일치하지 않습니다.");
             return ResponseEntity.badRequest().body(response);
         }
 
-        // 로그인 성공 시 세션 대용으로 쓸 간이 토큰 생성 (UUID)
         String mockToken = "TOKEN-" + UUID.randomUUID().toString().substring(0, 8);
 
-        // 리액트가 기억해야 할 필수 비민감 정보만 담아서 반환
         response.put("success", true);
         response.put("token", mockToken);
         response.put("username", user.getUsername());
-        response.put("orgCode", user.getOrgCode()); // 리액트가 이 코드를 보고 화면을 격리함
+        response.put("orgCode", user.getOrgCode());
         response.put("role", user.getRole());
 
         return ResponseEntity.ok(response);
     }
 
     /**
-     * 3. 비밀번호 변경 API (보안 세션 내 가동)
+     * 비밀번호 변경 API
      */
     @PostMapping("/change-password")
     public ResponseEntity<Map<String, Object>> changePassword(@RequestBody Map<String, String> request) {
@@ -108,7 +102,6 @@ public class AuthController {
             return ResponseEntity.badRequest().body(response);
         }
 
-        // 변경할 신규 비밀번호도 동일하게 안전 정규식 락 장착
         String passwordPattern = "^(?=.*[A-Z])(?=.*[!@#$%^&*(),.?\":{}|<>]).{8,}$";
         if (newPassword == null || !newPassword.matches(passwordPattern)) {
             response.put("success", false);
@@ -125,7 +118,7 @@ public class AuthController {
     }
 
     /**
-     * 4. 실시간 가변형 임계치 설정 API
+     * 실시간 가변형 임계치 설정 API
      */
     @PostMapping("/threshold")
     public ResponseEntity<Map<String, Object>> updateThreshold(@RequestBody Map<String, Object> request) {
@@ -135,7 +128,6 @@ public class AuthController {
 
         Map<String, Object> response = new HashMap<>();
 
-        // 고유 UUID만 안전하게 추출
         String uuid = agentId;
         if (agentId != null && agentId.contains("(") && agentId.contains(")")) {
             uuid = agentId.substring(agentId.indexOf("(") + 1, agentId.indexOf(")"));
@@ -147,7 +139,6 @@ public class AuthController {
             return ResponseEntity.badRequest().body(response);
         }
 
-        // MonitoringService 메모리 장부에 실시간 다이렉트 주입!
         com.capstone.monitoringserver.MonitoringService.cpuThresholdMap.put(uuid, cpuThreshold);
         com.capstone.monitoringserver.MonitoringService.memThresholdMap.put(uuid, memThreshold);
 
@@ -164,14 +155,10 @@ public class AuthController {
             @RequestParam String orgCode,
             @RequestParam String role) {
 
-        // [보안 설계] 최고 관리자(ADMIN)라면 모든 회사의 장애를 다 긁어오기 위해 빈 문자열("") 대입
-        // SQL Containing 특성상 빈 문자열을 넣으면 모든 조직코드가 프리패스로 통과되어 매칭
         String searchOrg = "ADMIN".equalsIgnoreCase(role) ? "" : orgCode.toUpperCase();
 
-        // 정확한 레포지토리 메서드로 호출 체결 (CPU 0.0타겟 조회)
         List<MetricEntity> incidents = metricRepository.findByCpuUsageAndAgentIdContainingOrderByTimestampDesc(0.0, searchOrg);
 
-        // 웹이 느려지는 대시보드 과부하를 막기 위해 최신 10건만 슬라이싱하여 리턴
         if (incidents.size() > 10) {
             incidents = incidents.subList(0, 10);
         }

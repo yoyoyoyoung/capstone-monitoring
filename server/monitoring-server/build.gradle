@@ -17,7 +17,6 @@ repositories {
 }
 
 dependencies {
-    // gRPC 필수 라이브러리
     implementation 'io.grpc:grpc-netty-shaded:1.61.1'
     implementation 'io.grpc:grpc-protobuf:1.61.1'
     implementation 'io.grpc:grpc-stub:1.61.1'
@@ -49,9 +48,8 @@ protobuf {
     }
 }
 
-def reactAppDir = "$projectDir/../../web-dashboard" // 리액트 프로젝트 경로
+def reactAppDir = "$projectDir/../../web-dashboard"
 
-// 리액트 종속성 설치
 task installReact(type: Exec) {
     workingDir reactAppDir
     if (System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')) {
@@ -61,7 +59,6 @@ task installReact(type: Exec) {
     }
 }
 
-// 리액트 빌드
 task buildReact(type: Exec) {
     dependsOn installReact
     workingDir reactAppDir
@@ -72,12 +69,10 @@ task buildReact(type: Exec) {
     }
 }
 
-// 빌드된 파일을 자바 static 폴더로 복사
 task copyReactBuildFiles(type: Copy) {
     dependsOn buildReact
     from "$reactAppDir/build"
     into "$projectDir/src/main/resources/static"
 }
 
-// 자바 빌드 시 리액트 빌드가 먼저 수행되도록 연결
 processResources.dependsOn copyReactBuildFiles

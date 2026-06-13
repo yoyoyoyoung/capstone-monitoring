@@ -18,13 +18,15 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 import org.springframework.scheduling.annotation.Scheduled;
+
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.capstone.monitoringserver.service.TelegramService;
 
 @Slf4j
-@GrpcService // gRPC 서버 자동 개방
-@RequiredArgsConstructor // Repository 주입
+@GrpcService
+@RequiredArgsConstructor
 public class MonitoringService extends MonitoringServiceGrpc.MonitoringServiceImplBase {
 
     public static final ConcurrentHashMap<String, LocalDateTime> lastSeenMap = new ConcurrentHashMap<>();
@@ -36,28 +38,27 @@ public class MonitoringService extends MonitoringServiceGrpc.MonitoringServiceIm
     private final TelegramMappingRepository telegramMappingRepository;
 
     private static final ConcurrentHashMap<String, LocalDateTime> lastAlertTimeMap = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, LocalDateTime> lastAiAlertTimeMap = new ConcurrentHashMap<>();
 
-    // 🔒 [가변형 임계치 장부] 에이전트(UUID)별로 커스텀 설정된 임계치를 실시간 저장하는 서랍 개설
     public static final ConcurrentHashMap<String, Double> cpuThresholdMap = new ConcurrentHashMap<>();
     public static final ConcurrentHashMap<String, Double> memThresholdMap = new ConcurrentHashMap<>();
+
+    private final com.capstone.monitoringserver.service.AiOpsService aiOpsService;
 
     @Override
     public void sendMetrics(MetricRequest request, StreamObserver<MetricResponse> responseObserver) {
         String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
 
-        // 에이전트 데이터 읽기
         String agentId = request.getAgentId();
         double cpu = request.getCpuUsage();
         double mem = request.getMemoryUsage();
 
-        // 🔒 [버그 박멸 기믹] 닉네임 파편화로 인한 30초 주기 분열을 막기 위해 괄호 안의 고유 UUID만 추출하여 Key로 삼습니다.
         String uuid = agentId;
         if (agentId.contains("(") && agentId.contains(")")) {
             uuid = agentId.substring(agentId.indexOf("(") + 1, agentId.indexOf(")"));
         }
-        latestNameMap.put(uuid, agentId); // 최신 이름표 업데이트
+        latestNameMap.put(uuid, agentId);
 
-        // 규격 데이터 필드 추출
         double disk = request.getDiskUsage();
         double netDownload = request.getNetDownloadSpeed();
         double netUpload = request.getNetUploadSpeed();
@@ -68,15 +69,14 @@ public class MonitoringService extends MonitoringServiceGrpc.MonitoringServiceIm
 
         String alertMessage = null;
 
-        boolean isThresholdBreached = false; // (테스트 대비) 진짜 임계치 돌파 여부 플래그 추가
+        boolean isThresholdBreached = false; // 테스트
 
         String statusMessage = isTelegramLinked ? "SUCCESS_LINKED" : "WARN_NOT_LINKED";
 
-        // 임계치 기본값을 90으로 설정
+        // 임계치 기본값
         double targetCpuThreshold = cpuThresholdMap.getOrDefault(uuid, 90.0);
         double targetMemThreshold = memThresholdMap.getOrDefault(uuid, 90.0);
 
-        // 텔레그램 알림 로직
         if (cpu >= targetCpuThreshold || mem >= targetMemThreshold) {
             alertMessage = String.format(
                     "⚠️ [임계치 초과 알림]\n서버 ID: %s\n• CPU: %.1f%%\n• RAM: %.1f%%\n• 디스크: %.1f%%\n• 네트워크 지연: %.1f ms\n발생 시각: %s\n즉시 확인 필요",
@@ -84,10 +84,9 @@ public class MonitoringService extends MonitoringServiceGrpc.MonitoringServiceIm
             );
             isThresholdBreached = true;
         }
-        // 예외 처리: 에이전트가 정상 종료를 신고한 경우
         else if (cpu == -99.0) {
-            statusMap.put(uuid, "INACTIVE"); // 정상 종료 상태로 변경 (감시 대상에서 제외)
-            lastSeenMap.remove(uuid);       // 🛑 [버그 박멸] 전송 중지 시 감시 장부에서 흔적을 완벽히 지워 알림 오작동 차단!
+            statusMap.put(uuid, "INACTIVE");
+            lastSeenMap.remove(uuid);
             lastAlertTimeMap.remove(uuid);
             log.info("👋 에이전트 [{}] 정상 종료 신고 수신. 장애 감시 대상에서 안전하게 제외합니다.", agentId);
 
@@ -109,7 +108,7 @@ public class MonitoringService extends MonitoringServiceGrpc.MonitoringServiceIm
         statusMap.put(uuid, "ACTIVE");
 
         if (alertMessage != null) {
-            String finalAlertMessage = alertMessage; // 람다식 내부 사용을 위한 상용 조치
+            String finalAlertMessage = alertMessage;
 
             telegramMappingRepository.findFirstByAgentIdContaining(uuid).ifPresentOrElse(
                     mapping -> {
@@ -120,11 +119,10 @@ public class MonitoringService extends MonitoringServiceGrpc.MonitoringServiceIm
                     }
             );
 
-            // 임계치 돌파 알림이 터졌을 때, 리액트 장애 이력창(findByCpuUsage(0.0))에 즉시 나타나도록 CPU를 0.0으로 강제 마킹한 로그를 DB에 한 줄 더 적재
             if (isThresholdBreached) {
                 MetricEntity alertIncident = new MetricEntity();
                 alertIncident.setAgentId(agentId);
-                alertIncident.setCpuUsage(0.0); // 리액트 화면 인식용 트리거 수치
+                alertIncident.setCpuUsage(0.0);
                 alertIncident.setMemoryUsage(mem);
                 alertIncident.setDiskUsage(disk);
                 alertIncident.setNetDownloadSpeed(netDownload);
@@ -134,11 +132,10 @@ public class MonitoringService extends MonitoringServiceGrpc.MonitoringServiceIm
                 alertIncident.setIsMysqlAlive(isMysqlAlive);
                 alertIncident.setTimestamp(LocalDateTime.now());
 
-                metricRepository.save(alertIncident); // 진짜 장애 상황일 때만 한 줄 추가 적재
+                metricRepository.save(alertIncident);
             }
         }
 
-        // DB 저장 객체 생성 및 저장 (기존 3개 인자 생성자 대신 Setter 방식으로 확장 대응)
         MetricEntity entity = new MetricEntity();
         entity.setAgentId(agentId);
         entity.setCpuUsage(cpu);
@@ -149,15 +146,41 @@ public class MonitoringService extends MonitoringServiceGrpc.MonitoringServiceIm
         entity.setNetworkLatency(latency);
         entity.setIsJavaAlive(isJavaAlive);
         entity.setIsMysqlAlive(isMysqlAlive);
-        entity.setTimestamp(LocalDateTime.now()); // 시간대 저장
+        entity.setTimestamp(LocalDateTime.now());
 
         metricRepository.save(entity);
 
-        // 콘솔에 로그 찍기
+        try {
+
+            Map<String, Object> aiData = aiOpsService.analyzeServerHealth(agentId);
+            double diskMins = (double) aiData.getOrDefault("diskPredictMinutes", -1.0);
+            double memMins = (double) aiData.getOrDefault("memPredictMinutes", -1.0);
+
+            LocalDateTime nowTime = LocalDateTime.now();
+            if (lastAiAlertTimeMap.get(uuid) == null || lastAiAlertTimeMap.get(uuid).isBefore(nowTime.minusMinutes(10))) {
+
+                String aiAlertMessage = null;
+                if (diskMins > 0 && diskMins <= 360) {
+                    aiAlertMessage = String.format("[AI 장애 전조 경보 - 스토리지 포화]\n서버 ID: %s\n%s\n즉시 디스크 볼륨 확장 및 로그 소거 조치가 권장됩니다.", agentId, aiData.get("diskPredictMessage"));
+                } else if (memMins > 0 && memMins <= 60) {
+                    aiAlertMessage = String.format("[AI 장애 전조 경보 - OOM 크래시 위기]\n서버 ID: %s\n%s\n메모리 누수 프로세스 강제 킬 및 세션 점검이 필수적입니다.", agentId, aiData.get("memPredictMessage"));
+                }
+
+                if (aiAlertMessage != null) {
+                    String finalAiMsg = aiAlertMessage;
+                    lastAiAlertTimeMap.put(uuid, nowTime);
+                    telegramMappingRepository.findFirstByAgentIdContaining(uuid).ifPresent(mapping -> {
+                        telegramService.sendMessage(mapping.getChatId(), finalAiMsg);
+                    });
+                }
+            }
+        } catch (Exception e) {
+            log.debug("AI 전조 텔레그램 중계 대기 중...");
+        }
+
         log.info("데이터 수신 -> [ID: {}] CPU: {}%, RAM: {}%, 디스크: {}%, Ping: {}ms, Java: {}, MySQL: {}",
                 agentId, cpu, mem, disk, latency, isJavaAlive, isMysqlAlive);
 
-        // 에이전트에게 답장 보내기
         MetricResponse response = MetricResponse.newBuilder()
                 .setSuccess(true)
                 .setMessage(statusMessage)
@@ -168,15 +191,13 @@ public class MonitoringService extends MonitoringServiceGrpc.MonitoringServiceIm
     }
 
     /**
-     * 🕵️‍♂️ [10초 주기 무단결근 감시관 알고리즘 - 문구 통일 버전]
-     * 최초 장애든, 지속 장애든 유저가 요청하신 동일한 포맷으로 1분마다 알림을 반복 송신합니다.
+     * 1분 간격 알림 송신
      */
     @Scheduled(fixedRate = 10000)
     public void checkAgentHeartbeat() {
         LocalDateTime now = LocalDateTime.now();
 
         lastSeenMap.forEach((uuid, lastSeen) -> {
-            // 🔒 최신 이름 데이터 풀에서 실시간 변경된 닉네임 문자열 획득
             String currentAgentId = latestNameMap.getOrDefault(uuid, uuid);
 
             boolean isJustDisconnected = "ACTIVE".equals(statusMap.get(uuid)) && lastSeen.isBefore(now.minusMinutes(1));

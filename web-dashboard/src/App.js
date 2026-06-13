@@ -3,48 +3,51 @@ import axios from 'axios';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 function App() {
-  // ─── [세션 및 로그인 상태 관리 상태] ───
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
-  const [userOrgCode, setUserOrgCode] = useState(""); // 🔒 로그인한 유저의 조직 코드 (데이터 격리용)
-  const [userRole, setUserRole] = useState("");       // USER 또는 ADMIN 구분
+  const [userOrgCode, setUserOrgCode] = useState("");
+  const [userRole, setUserRole] = useState("");
 
-  // ─── [로그인 폼 상태 입력값] ───
   const [loginId, setLoginId] = useState("");
   const [loginPw, setLoginPw] = useState("");
   const [loginError, setLoginError] = useState("");
 
-  // 📝 회원가입 폼 상태 입력값 (운영자/사용자 권한 드롭다운 레이아웃은 기획 제외 반영)
   const [isSignUpMode, setIsSignUpMode] = useState(false);
   const [joinId, setJoinId] = useState("");
   const [joinPw, setJoinPw] = useState("");
   const [joinOrg, setJoinOrg] = useState("");
   const [joinError, setJoinError] = useState("");
 
-  // ─── [기존 대시보드 상태 데이터] ───
   const [agents, setAgents] = useState([]);
   const [selectedAgent, setSelectedAgent] = useState("");
   const [data, setData] = useState([]);
   const [tokenInfo, setTokenInfo] = useState(null);
   const [showModal, setShowModal] = useState(false);
 
-  // 🔑 비밀번호 변경 모달 폼 상태 입력값
   const [showPwModal, setShowPwModal] = useState(false);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [pwError, setPwError] = useState("");
 
-  // ⚙️ 가변형 임계치 설정 제어 상태 변수 (초기값 90%)
   const [cpuThreshold, setCpuThreshold] = useState(90);
   const [memThreshold, setMemThreshold] = useState(90);
 
-  // 🚨 [오류 해결] 과거 장애 이력 상태 변수 서랍 정식 개설
   const [incidents, setIncidents] = useState([]);
 
   // !! Alert 강제 무시 테스트 용도 !!
   const [isAlertDismissed, setIsAlertDismissed] = useState(false);
 
-  // 🌐 네트워크 속도 가변 단위 변환기
+  const [aiData, setAiData] = useState({
+    healthScore: 100,
+    healthGrade: "🟢 최적 (Excellent)",
+    rcaAnalysis: "🟢 모든 시스템 자원이 최적의 평형 상태를 유지 중입니다.",
+    diskPredictMessage: "🟢 안정 (사용량 유지 또는 우하향 패턴)",
+    memPredictMessage: "🟢 안정 (사용량 유지 또는 우하향 패턴)"
+  });
+
+  const [aiReport, setAiReport] = useState("");
+  const [isLoadingReport, setIsLoadingReport] = useState(false);
+
   const formatNetworkSpeed = (kbValue) => {
     if (kbValue === undefined || kbValue === null || isNaN(kbValue)) return '0 KB/s';
     if (kbValue >= 1024 * 1024) {
@@ -56,7 +59,6 @@ function App() {
     return `${kbValue.toFixed(1)} KB/s`;
   };
 
-  // ⚙️ [API] 조절된 임계치를 백엔드로 동적 전송하는 함수
   const handleUpdateThreshold = () => {
     if (!selectedAgent) return;
     axios.post('http://141.164.50.161:8080/api/auth/threshold', {
@@ -69,10 +71,9 @@ function App() {
         alert(response.data.message);
       }
     })
-    .catch(error => console.error("임계치 동적 반영 실패:", error));
+    .catch(error => console.error(error));
   };
 
-  // 🔐 [API] 로그인 처리 함수
   const handleLogin = (e) => {
     e.preventDefault();
     setLoginError("");
@@ -108,7 +109,6 @@ function App() {
     });
   };
 
-  // 🔑 [API] 비밀번호 변경 처리 함수
   const handleChangePassword = (e) => {
     e.preventDefault();
     setPwError("");
@@ -130,7 +130,6 @@ function App() {
     });
   };
 
-  // 📝 [API] 회원가입 처리 함수
   const handleSignup = (e) => {
     e.preventDefault();
     setJoinError("");
@@ -159,7 +158,6 @@ function App() {
     });
   };
 
-  // 🚪 [API] 로그아웃 처리 함수 (세션 즉시 파기)
   const handleLogout = () => {
     localStorage.clear(); 
     setIsLoggedIn(false);
@@ -167,46 +165,34 @@ function App() {
     setLoginId(""); setLoginPw("");
   };
 
-  // 1. 에이전트 목록 가져오기 (UUID 기준 중복 정화 및 이름표 스왑 알고리즘)
   const fetchAgents = () => {
     if (!isLoggedIn) return;
     axios.get('http://141.164.50.161:8080/api/agents')
       .then(response => {
-        // [기존 로직] 멀티테넌시 조직 기본 필터링
         const filtered = response.data.filter(agent => {
           if (userRole === "ADMIN") return true; 
           return agent.toUpperCase().includes(userOrgCode.toUpperCase()); 
         });
 
-        // 🛡️ [고도화 기믹] 닉네임이 바뀌어도 괄호 안의 고유 UUID를 기준으로 자동 그룹화
         const uuidMap = {};
         filtered.forEach(agent => {
-          // "닉네임(721c1dd2)" 구조에서 괄호 안의 고유 ID인 UUID만 파싱합니다.
           const match = agent.match(/\(([^)]+)\)/);
           const uuid = match ? match[1] : agent;
-          
-          // 장부에 UUID를 키로 저장 (동일한 UUID라면 가장 마지막에 나온 최신 이름표가 이전 이름표를 덮어씀)
           uuidMap[uuid] = agent;
         });
 
-        // 중복 글자가 완벽하게 세척된 단일 에이전트 배열 추출
         const uniqueAgents = Object.values(uuidMap);
-
         setAgents(uniqueAgents);
         
-        // 🎯 [세션 고정 및 프리셀렉트 통합 락] 
         setSelectedAgent(prev => {
-          // ⚡ [최우선 순위 순정 패치] 에이전트 [웹 대시보드 열기]를 통해 주소창에 파라미터가 유입된 경우!
           const queryParams = new URLSearchParams(window.location.search);
           const urlTargetUuid = queryParams.get('agentId') || queryParams.get('uuid');
           
           if (urlTargetUuid) {
-            // 내 조직 리스트 중 에이전트 주소창 UUID를 포함하는 완벽한 매칭 노드 검색
             const matchedUrlAgent = uniqueAgents.find(a => a.toLowerCase().includes(urlTargetUuid.toLowerCase()));
             if (matchedUrlAgent) return matchedUrlAgent;
           }
 
-          // [2순위] 기존에 보던 컴퓨터 세션 추적 (이름 변경 대응)
           if (prev) {
             const prevMatch = prev.match(/\(([^)]+)\)/);
             const prevUuid = prevMatch ? prevMatch[1] : prev;
@@ -219,26 +205,49 @@ function App() {
             if (updatedNameAgent) return updatedNameAgent; 
           }
           
-          // [3순위] 최초 진입 및 찌꺼기가 없을 시 0번째 컴퓨터 자동 프리셀렉트
           if (uniqueAgents.length > 0) return uniqueAgents[0];
-          
           return "";
         });
       })
-      .catch(error => console.error("에이전트 목록 로드 실패:", error));
+      .catch(error => console.error(error));
   };
 
-  // 1-2. 과거 장애 이력 가져오기 (레포지토리 격리 쿼리 동기화)
   const fetchIncidents = () => {
     if (!isLoggedIn) return;
     axios.get(`http://141.164.50.161:8080/api/auth/incidents?orgCode=${userOrgCode}&role=${userRole}`)
       .then(response => {
         setIncidents(response.data);
       })
-      .catch(error => console.error("장애 이력 로드 실패:", error));
+      .catch(error => console.error(error));
   };
 
-  // 2. 특정 에이전트 데이터 가져오기
+  const fetchAiAnalysis = () => {
+    if (!isLoggedIn || !selectedAgent) return;
+    axios.get(`http://141.164.50.161:8080/api/ai/analyze?agentId=${selectedAgent}`)
+      .then(response => {
+        if (response.data) {
+          setAiData(response.data);
+        }
+      })
+      .catch(error => console.error(error));
+  };
+
+  const fetchAiReport = () => {
+    if (!selectedAgent) return;
+    setIsLoadingReport(true);
+    axios.get(`http://141.164.50.161:8080/api/ai/report?agentId=${selectedAgent}`)
+      .then(response => {
+        if (response.data && response.data.report) {
+          setAiReport(response.data.report);
+        }
+        setIsLoadingReport(false);
+      })
+      .catch(error => {
+        console.error(error);
+        setIsLoadingReport(false);
+      });
+  };
+
   const fetchMetrics = () => {
     if (!isLoggedIn || !selectedAgent) return;
 
@@ -253,11 +262,11 @@ function App() {
           return { ...item, displayTime };
         });
         setData(processedData);
+        fetchAiAnalysis();
       })
-      .catch(error => console.error("데이터 로드 실패:", error));
+      .catch(error => console.error(error));
   };
 
-  // 3. 텔레그램 연동 토큰 발급
   const handleRequestTelegram = () => {
     if (!selectedAgent) return;
     axios.post('http://141.164.50.161:8080/api/telegram/token', { agentId: selectedAgent })
@@ -265,17 +274,22 @@ function App() {
         setTokenInfo(response.data);
         setShowModal(true);
       })
-      .catch(error => console.error("텔레그램 토큰 발급 실패:", error));
+      .catch(error => console.error(error));
   };
 
-  // 📊 실시간 수치 연산을 처리하는 변수 (useEffect보다 위에 선언하여 ReferenceError 완벽 방어)
   const latest = data[data.length - 1] || {
     cpuUsage: 0, memoryUsage: 0, diskUsage: 0,
     netDownloadSpeed: 0, netUploadSpeed: 0, networkLatency: 0,
     isJavaAlive: false, isMysqlAlive: false
   };
 
-  // 🔄 [최초 실행] 브라우저에 저장된 로그인 세션 자동 스캔
+  const getHealthColor = (score) => {
+    if (score >= 90) return '#4ecdc4';
+    if (score >= 75) return '#4cc9f0';
+    if (score >= 41) return '#ffb703';
+    return '#ff6b6b';
+  };
+
   useEffect(() => {
     const savedToken = localStorage.getItem("userToken");
     const savedUser = localStorage.getItem("username");
@@ -316,14 +330,12 @@ function App() {
     }
   }, [latest.cpuUsage, latest.memoryUsage, cpuThreshold, memThreshold, selectedAgent]);
 
-  // ─── 🚪 화면 1: 로그인하지 않은 상태일 때 ───
   if (!isLoggedIn) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', backgroundColor: '#13131a', fontFamily: 'sans-serif', color: '#fff' }}>
         <div style={{ backgroundColor: '#1c1c24', border: '1px solid #2d2d3d', padding: '40px', borderRadius: '16px', width: '360px', boxShadow: '0 20px 40px rgba(0,0,0,0.4)' }}>
           
           {isSignUpMode ? (
-            /* 📝 회원가입 폼 레이아웃 구역 */
             <form onSubmit={handleSignup} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                 <h2 style={{ margin: 0, fontSize: '24px', color: '#ffffff' }}>📝 관제 계정 생성</h2>
@@ -380,7 +392,6 @@ function App() {
               </p>
             </form>
           ) : (
-            /* 🔐 로그인 폼 레이아웃 구역 */
             <>
               <div style={{ textAlign: 'center', marginBottom: '30px' }}>
                 <h2 style={{ margin: 0, fontSize: '24px', color: '#ffffff' }}>🔐 인프라 통합 관제탑</h2>
@@ -415,8 +426,6 @@ function App() {
                 <button 
                   type="submit"
                   style={{ backgroundColor: '#4361ee', color: '#fff', border: 'none', padding: '14px', borderRadius: '8px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px', transition: '0.2s' }}
-                  onMouseOver={(e) => e.target.style.backgroundColor = '#3f37c9'}
-                  onMouseOut={(e) => e.target.style.backgroundColor = '#4361ee'}
                 >
                   관제 세션 연결하기
                 </button>
@@ -436,11 +445,9 @@ function App() {
     );
   }
 
-  // ─── 📊 화면 2: 로그인 성공 시 출력되는 메인 관제 대시보드 ───
   return (
     <div style={{ padding: '30px', backgroundColor: '#13131a', minHeight: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff' }}>
       
-      {/* HEADER SECTION */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', borderBottom: '1px solid #222230', paddingBottom: '20px' }}>
         <div>
           <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 'bold', color: '#ffffff' }}>🖥️ 대형 관제 서버 통합 대시보드</h1>
@@ -452,7 +459,6 @@ function App() {
           </div>
         </div>
         
-        {/* 제어 컨트롤러 존 */}
         <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
           <div style={{ backgroundColor: '#1c1c24', padding: '10px 15px', borderRadius: '8px', border: '1px solid #2d2d3d' }}>
             <label style={{ marginRight: '10px', fontWeight: '600', color: '#a1a1aa', fontSize: '14px' }}>감시 대상:</label>
@@ -495,7 +501,6 @@ function App() {
         </div>
       </div>
 
-      {/* LIVE STATE TRAFFIC LIGHTS */}
       <div style={{ display: 'flex', gap: '20px', marginBottom: '25px' }}>
         <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#1c1c24', padding: '12px 20px', borderRadius: '10px', border: '1px solid #2d2d3d', flex: 1 }}>
           <span style={{ fontSize: '14px', color: '#a1a1aa', marginRight: 'auto' }}>OS 자바 어플리케이션 가동 상태</span>
@@ -511,11 +516,9 @@ function App() {
         </div>
       </div>
 
-      {/* MAIN GRID LAYOUT */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '25px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
           
-          {/* 차트 1: 연산 지표 */}
           <div style={{ backgroundColor: '#1c1c24', border: '1px solid #2d2d3d', padding: '20px', borderRadius: '12px' }}>
             <h3 style={{ margin: '0 0 15px 0', fontSize: '16px', color: '#e4e4e7' }}>📊 연산 및 가상 메모리 실시간 지표</h3>
             <div style={{ width: '100%', height: 260 }}>
@@ -533,7 +536,6 @@ function App() {
             </div>
           </div>
 
-          {/* 차트 2: 네트워크 트래픽 */}
           <div style={{ backgroundColor: '#1c1c24', border: '1px solid #2d2d3d', padding: '20px', borderRadius: '12px' }}>
             <h3 style={{ margin: '0 0 15px 0', fontSize: '16px', color: '#e4e4e7' }}>🌐 네트워크 입출력 대역폭 트래픽 (I/O)</h3>
             <div style={{ width: '100%', height: 200 }}>
@@ -563,8 +565,55 @@ function App() {
           </div>
         </div>
 
-        {/* SIDE PANELS */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+          
+          <div style={{ background: 'linear-gradient(135deg, #1c1c24 0%, #171721 100%)', border: '1px solid #4361ee', padding: '25px', borderRadius: '16px', boxShadow: '0 8px 32px rgba(67,97,238,0.15)' }}>
+            <div style={{ fontSize: '15px', color: '#4cc9f0', fontWeight: 'bold', marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>🧠 AI Ops 인프라 예측 인텔리전스</span>
+            </div>
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '20px', borderBottom: '1px solid #222230', paddingBottom: '15px' }}>
+              <div style={{ position: 'relative', width: '80px', height: '80px' }}>
+                <svg width="80" height="80" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="40" stroke="#222230" strokeWidth="10" fill="transparent" />
+                  <circle 
+                    cx="50" cy="50" r="40" 
+                    stroke={getHealthColor(aiData.healthScore)} 
+                    strokeWidth="10" 
+                    fill="transparent" 
+                    strokeDasharray="251.2"
+                    strokeDashoffset={251.2 - (251.2 * (aiData.healthScore || 100)) / 100}
+                    strokeLinecap="round"
+                    style={{ transition: 'stroke-dashoffset 0.5s ease, stroke 0.5s ease', transform: 'rotate(-90deg)', transformOrigin: '50% 50%' }}
+                  />
+                </svg>
+                <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#fff' }}>{aiData.healthScore}</span>
+                  <span style={{ fontSize: '10px', color: '#71717a', fontWeight: '600' }}>SCORE</span>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '12px', color: '#a1a1aa', fontWeight: '600' }}>현재 종합 건강도</div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold', color: getHealthColor(aiData.healthScore), marginTop: '4px' }}>{aiData.healthGrade}</div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '15px' }}>
+              <div style={{ fontSize: '12px', color: '#71717a', fontWeight: 'bold', marginBottom: '6px' }}>🔮 AI 자원 고갈 전조 예측 (Predictive Alert)</div>
+              <div style={{ backgroundColor: '#13131a', padding: '10px 12px', borderRadius: '8px', border: '1px solid #2d2d3d', fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ color: '#e4e4e7', lineHeight: '1.4' }}><span style={{ color: '#f77f00', fontWeight: 'bold' }}>• 디스크:</span> {aiData.diskPredictMessage}</div>
+                <div style={{ color: '#e4e4e7', lineHeight: '1.4' }}><span style={{ color: '#3399ff', fontWeight: 'bold' }}>• 메모리:</span> {aiData.memPredictMessage}</div>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: '12px', color: '#71717a', fontWeight: 'bold', marginBottom: '6px' }}>🔎 실시간 원인 분석 (RCA Report)</div>
+              <div style={{ backgroundColor: '#13131a', padding: '12px', borderRadius: '8px', border: '1px solid #2d2d3d', fontSize: '13px', color: '#4ecdc4', lineHeight: '1.5', fontWeight: '500' }}>
+                {aiData.rcaAnalysis}
+              </div>
+            </div>
+          </div>
+
           <div style={{ backgroundColor: '#1c1c24', border: '1px solid #2d2d3d', padding: '25px', borderRadius: '12px' }}>
             <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>💾 스토리지 디스크 점유율</div>
             <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#f77f00', marginBottom: '15px' }}>{latest.diskUsage?.toFixed(1)} %</div>
@@ -580,7 +629,6 @@ function App() {
             </div>
           </div>
 
-          {/* ⚙️ 실시간 가변형 임계치 컨트롤 조절기 패널 (범위 10% ~ 95% 🛠️) */}
           <div style={{ backgroundColor: '#1c1c24', border: '1px solid #2d2d3d', padding: '25px', borderRadius: '12px' }}>
             <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '15px', fontWeight: 'bold' }}>⚙️ 실시간 장애 알림 임계치 제어</div>
             
@@ -589,7 +637,6 @@ function App() {
                 <span>CPU 경보 임계치</span>
                 <span style={{ color: '#ff4d4d', fontWeight: 'bold' }}>{cpuThreshold} %</span>
               </div>
-              {/* 🛠️ 테스팅 강화를 위해 min 범위를 50에서 10으로 하향 조정 */}
               <input 
                 type="range" min="10" max="95" value={cpuThreshold} 
                 onChange={(e) => setCpuThreshold(Number(e.target.value))} 
@@ -602,7 +649,6 @@ function App() {
                 <span>RAM 경보 임계치</span>
                 <span style={{ color: '#3399ff', fontWeight: 'bold' }}>{memThreshold} %</span>
               </div>
-              {/* 🛠️ 테스팅 강화를 위해 min 범위를 50에서 10으로 하향 조정 */}
               <input 
                 type="range" min="10" max="95" value={memThreshold} 
                 onChange={(e) => setMemThreshold(Number(e.target.value))} 
@@ -628,7 +674,22 @@ function App() {
         </div>
       </div>
 
-      {/* 🚨 과거 인프라 장애 이력 추적 테이블 판넬 */}
+      <div style={{ backgroundColor: '#1c1c24', border: '1px solid #2d2d3d', padding: '25px', borderRadius: '12px', marginTop: '25px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+          <h3 style={{ margin: 0, fontSize: '16px', color: '#4cc9f0', fontWeight: 'bold' }}>📝 AI 인프라 일간 관제 요약 리포트</h3>
+          <button 
+            onClick={fetchAiReport}
+            disabled={!selectedAgent || isLoadingReport}
+            style={{ backgroundColor: '#4ecdc4', color: '#13131a', border: 'none', padding: '8px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            {isLoadingReport ? "생성 중..." : "🚀 AI 요약 리포트 가져오기"}
+          </button>
+        </div>
+        <div style={{ backgroundColor: '#13131a', padding: '15px', borderRadius: '8px', border: '1px solid #2d2d3d', fontSize: '14px', color: '#e4e4e7', whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>
+          {aiReport || "우측 상단의 버튼을 클릭하면 오늘 수집된 실시간 시계열 데이터를 바탕으로 AI 통합 보고서가 동적 컴파일됩니다."}
+        </div>
+      </div>
+
       <div style={{ backgroundColor: '#1c1c24', border: '1px solid #2d2d3d', padding: '25px', borderRadius: '12px', marginTop: '25px' }}>
         <h3 style={{ margin: '0 0 15px 0', fontSize: '16px', color: '#ff6b6b', fontWeight: 'bold' }}>📋 시스템 다운타임 및 장애 인시던트 이력 (최신 10건)</h3>
         
@@ -674,7 +735,6 @@ function App() {
         </div>
       </div>
 
-      {/* TELEGRAM MODAL POPUP */}
       {showModal && tokenInfo && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#1c1c24', border: '1px solid #2d2d3d', padding: '30px', borderRadius: '16px', width: '450px', textAlign: 'center' }}>
@@ -690,7 +750,6 @@ function App() {
         </div>
       )}
 
-      {/* [실시간 관제 긴급 팝업 오버레이] */}
       {(latest.cpuUsage >= cpuThreshold || latest.memoryUsage >= memThreshold) && selectedAgent && !isAlertDismissed && (
         <div style={{
           position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
@@ -739,8 +798,6 @@ function App() {
                 width: '100%',
                 transition: 'background-color 0.2s'
               }}
-              onMouseOver={(e) => e.target.style.backgroundColor = '#e05353'}
-              onMouseOut={(e) => e.target.style.backgroundColor = '#ff6b6b'}
             >
               ❌ 경고 임시 숨기기 (장애 인지)
             </button>
@@ -748,7 +805,6 @@ function App() {
         </div>
       )}
 
-      {/* PASSWORD CHANGE MODAL POPUP */}
       {showPwModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#1c1c24', border: '1px solid #2d2d3d', padding: '30px', borderRadius: '16px', width: '360px', textAlign: 'center' }}>

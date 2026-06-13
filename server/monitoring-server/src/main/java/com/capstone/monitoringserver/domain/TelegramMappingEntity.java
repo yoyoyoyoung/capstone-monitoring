@@ -12,7 +12,7 @@ import lombok.NoArgsConstructor;
 public class TelegramMappingEntity {
 
     @Id
-    private String agentId; // PK - 닉네임(UUID)
+    private String agentId;
 
     private String chatId;
 

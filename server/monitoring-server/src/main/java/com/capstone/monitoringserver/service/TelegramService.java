@@ -27,21 +27,17 @@ public class TelegramService {
 
     private int lastUpdateId = 0;
 
-    // 토큰과 에이전트ID를 5분간 임시 매핑할 서버 메모리 보관함
-    // Key: 6자리 숫자 토큰, Value: 에이전트 ID
     private final Map<String, String> tokenCache = new ConcurrentHashMap<>();
 
     /**
-     *리액트 웹 화면에서 요청 시 호출할 '6자리 랜덤 인증 토큰' 생성 메소드
+     * 6자리 랜덤 인증 토큰 생성
      */
     public String generateVerificationToken(String agentId) {
         Random random = new Random();
-        // 100000 ~ 999999 사이 6자리 숫자 생성
         String token = String.valueOf(100000 + random.nextInt(900000));
 
         tokenCache.put(token, agentId);
 
-        // 비동기 스레드로 5분(300,000ms) 뒤에 토큰을 메모리에서 자동 만료(삭제) 처리
         new Thread(() -> {
             try {
                 Thread.sleep(300000);
@@ -55,7 +51,7 @@ public class TelegramService {
     }
 
     /**
-     * 특정 대화방으로 메시지를 발송하는 공용 메소드
+     * 특정 대화방으로 메시지를 발송
      */
     public void sendMessage(String chatId, String text) {
         String url = "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage";
@@ -71,7 +67,7 @@ public class TelegramService {
     }
 
     /**
-     * 초마다 텔레그램 서버를 돌며 /start [토큰] 명령어를 가로채는 폴링 엔진
+     * /start [토큰] 폴링
      */
     @Scheduled(fixedDelay = 2000)
     public void pollTelegramUpdates() {
@@ -90,8 +86,6 @@ public class TelegramService {
                         if (update.has("message")) {
                             JsonNode message = update.get("message");
 
-                            // [버그 수정 핵심] 메시지가 발송된 실제 시간(date)을 검사합니다.
-                            // 서버가 방금 켜지기 전에 쌓여있던 옛날 인증 내역들은 과감히 패스(continue)합니다!
                             if (message.has("date")) {
                                 long messageTime = message.get("date").asLong();
                                 if (messageTime < serverStartTime) {
@@ -112,7 +106,7 @@ public class TelegramService {
                                                     "3️⃣ 새 브라우저 창에 복사한 주소를 붙여넣어 실행하거나, 발급된 6자리 숫자를 이 채팅방에 입력해 주세요.\n\n" +
                                                     "⚠️ 주의: 보안을 위해 연동 토큰은 발급 후 5분간만 유효합니다."
                                     );
-                                    continue; // 가이드를 보냈으니 다음 메시지 처리로 넘어감
+                                    continue;
                                 }
                                 if (text.startsWith("/start ")) {
                                     String submittedToken = text.replace("/start ", "").strip();
@@ -133,8 +127,6 @@ public class TelegramService {
                                     }
                                 }
 
-                                // 🔒 [4단계: 텔레그램 양방향 실시간 명령어 /status 처리기 전격 탑재]
-                                // 기존 레포지토리에 새 메소드를 정의하는 리스크를 없애기 위해 findAll-stream 기믹으로 안전 가설 완료!
                                 if (text.trim().startsWith("/status")) {
                                     telegramMappingRepository.findAll().stream()
                                             .filter(mapping -> chatId.equals(mapping.getChatId()))
@@ -143,13 +135,11 @@ public class TelegramService {
                                                     mapping -> {
                                                         String agentId = mapping.getAgentId();
 
-                                                        // 고유 UUID 식별자 추출
                                                         String uuid = agentId;
                                                         if (agentId.contains("(") && agentId.contains(")")) {
                                                             uuid = agentId.substring(agentId.indexOf("(") + 1, agentId.indexOf(")"));
                                                         }
 
-                                                        // MonitoringService 중앙 관제 메모리 세션 동적 동기화 매핑 조회
                                                         java.time.LocalDateTime lastSeen = com.capstone.monitoringserver.MonitoringService.lastSeenMap.get(uuid);
                                                         String currentStatus = com.capstone.monitoringserver.MonitoringService.statusMap.getOrDefault(uuid, "INACTIVE");
                                                         String currentName = com.capstone.monitoringserver.MonitoringService.latestNameMap.getOrDefault(uuid, agentId);

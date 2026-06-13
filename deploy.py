@@ -2,18 +2,15 @@ import subprocess
 import sys
 import os
 
-# [배포 설정 정보] 
 SERVER_IP = "141.164.50.161"
 SERVER_USER = "root"
 VERSION = "0.0.1"
 JAR_NAME = f"monitoring-server-{VERSION}-SNAPSHOT.jar"
 
-# 로컬(노트북)에서 빌드된 JAR 파일 위치 (스프링 기본 빌드 경로)
 BASE_DIR = os.getcwd() 
 LOCAL_JAR_PATH = os.path.join(BASE_DIR, "server", "monitoring-server", "build", "libs", JAR_NAME)
 REMOTE_DIR = "/root"
 
-# 서버에서 실행할 자바 명령어 (로그를 파일로 저장하고 백그라운드 실행하기 위해 nohup 사용)
 START_COMMAND = (
     f"nohup java -jar {REMOTE_DIR}/{JAR_NAME} "
     f"--spring.datasource.url='jdbc:mysql://localhost:3306/monitoring_db?serverTimezone=Asia/Seoul' "
@@ -22,17 +19,14 @@ START_COMMAND = (
     f"--spring.jpa.hibernate.ddl-auto=update "
     f"> {REMOTE_DIR}/server.log 2>&1 &"
 )
-# ===================================================
 
 def run_command(cmd, shell=True):
-    """로컬 명령어를 실행하고 결과를 출력하는 함수"""
     result = subprocess.run(cmd, shell=shell, text=True)
     if result.returncode != 0:
         print(f"작업 실패: {cmd}")
         sys.exit(1)
 
 print("[1/4] 로컬에서 스프링 부트 프로젝트 빌드 중")
-# 인텔리제이 프로젝트 폴더로 이동하여 테스트를 제외하고 빠르게 빌드
 start_dir = os.getcwd()
 os.chdir("./server/monitoring-server")
 run_command("gradlew.bat clean bootJar")
@@ -45,9 +39,7 @@ if not os.path.exists(LOCAL_JAR_PATH):
 run_command(f"scp {LOCAL_JAR_PATH} {SERVER_USER}@{SERVER_IP}:{REMOTE_DIR}/")
 
 print("[3/4] Vultr 서버에서 기존 구동 중인 자바 서버 종료 중...")
-# gRPC 포트(9090)와 웹 포트(8080)를 사용하는 기존 프로세스를 강제 종료
 remote_stop_cmd = f'ssh {SERVER_USER}@{SERVER_IP} "sudo fuser -k 8080/tcp; sudo fuser -k 9090/tcp"'
-# 포트가 이미 비어있으면 에러 코드를 반환하므로 무조건 종료 방지를 위해 셸 에러를 무시하도록 처리
 subprocess.run(remote_stop_cmd, shell=True, capture_output=True)
 
 print("[4/4] Vultr 서버에서 새 버전 자바 서버 백그라운드 가동 중...")
